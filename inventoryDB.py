@@ -1,6 +1,6 @@
 import sqlite3
-
-def init_database():
+from datetime import datetime
+def initDatabase():
     conn = sqlite3.connect('inventory.db')
     conn.execute("PRAGMA foreign_keys = ON;")
     cursor = conn.cursor()
@@ -73,14 +73,53 @@ def init_database():
                     FOREIGN KEY (location_id) REFERENCES locations(id)
                     )
                     ''')
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_product_name ON products(name);")
         conn.commit()
         return conn
     except sqlite3.Error as e:
         conn.rollback()
         raise e
 
-def add_locations(conn, location_name, is_storage, address=''):
+def addLocations(conn, location_name, is_storage, address=''):
     cursor = conn.cursor()
-    
     cursor.execute("INSERT INTO locations (location_name, is_storage, address) VALUES (?, ?, ?)", (location_name, is_storage, address))
+    conn.commit()
+
+def addProduct(conn, name, category):
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO products (name, category) VALUES (?, ?)", (name, category))
+    conn.commit()
+
+def findProductByName(conn, name):
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM products WHERE name = ?", (name,))
+    return cursor.fetchone()[0]
+
+def addPrice(conn, variant, price, date_time = None):
+    cursor = conn.cursor()
+
+    if isinstance(variant, str):
+        #TODO Maybe make search by variant name (+ product name?)
+        pass
+    if date_time and isinstance(date_time, datetime):
+        date_time_formatted = date_time.strftime('%Y-%m-%d %H:%M:%S')
+        cursor.execute("INSERT INTO price_history (variant_id, price, start_time) VALUES (?, ?, ?)", variant, price, date_time_formatted)
+    else:
+        cursor.execute("INSERT INTO price_history (variant_id, price) VALUES (?, ?)", (variant, price))
     
+    cursor.execute("UPDATE variants SET current_price = ? WHERE id = ?", (price, variant))
+
+def addVariant(conn, product, description, current_price=None):
+    cursor = conn.cursor()
+    cursor.execute("BEGIN;")
+    try:
+        if isinstance(product, str):
+            product = findProductByName(conn, product)
+        cursor.execute("INSERT INTO variants (product_id, description) VALUES (?, ?) RETURNING id", (product, description))
+        variant_id = cursor.fetchone()[0]
+        if current_price:
+            addPrice(conn, variant_id, current_price)
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
