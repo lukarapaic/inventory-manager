@@ -9,12 +9,16 @@ def main():
         if conn:
             conn.close()
     #TESTING ADDING LOCATIONS
-    product_name = input("Enter product name: ")
-    description = input("Input the product variant description: ")
-    price = int(input("Input the Starting price: "))
+    #variant = int(input("Enter variant id: "))
+    #text_body = input("Input the product variant review: ")
+    #user_name = input("Input the user name: ")
+    #rating = int(input("Enter your rating for the variant: "))
     try:
         pass
-        iDB.addVariant(conn, product_name, description, price)
+        #iDB.addReview(conn, variant, text_body, user_name, rating)
+        print(iDB.fetchReviews(conn, 1))
+        rating = iDB.getVariantRating(conn,1)
+        print("Average rating is {}".format(rating))
     except Exception as e:
         print(e)
     
