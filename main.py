@@ -1,4 +1,6 @@
 import inventoryDB as iDB
+import argparse
+import inventoryTest as test
 
 def main():
     #TEMP TESTING
@@ -26,4 +28,17 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Inventory Manager")
+
+    parser.add_argument("--test_populate", action = "store_true", help = "Populate the DB with a test example")
+    parser.add_argument("--init", action = "store_true", help = "initialises the DB tables")
+    args = parser.parse_args()
+    
+    if args.test_populate:
+        #Populate the db
+        test.populate()
+    elif args.init:
+        #Initialise the db
+        iDB.initDatabase()
+    else:
+        main()
