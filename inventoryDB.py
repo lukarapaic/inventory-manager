@@ -208,8 +208,8 @@ def addMovementTransfer(conn, variant, location, source_location, amount, reason
     return _addMovementTransferLogic(conn, variant, location, source_location, amount, reason, status)
 
 @wrap_transaction
-def addMovementAdjust(conn, variant, location, amount, reason, status):
-    return _addMovementAdjustLogic(conn, variant, location, amount, reason, status)
+def addMovementAdjust(conn, variant, location, amount, reason):
+    return _addMovementAdjustLogic(conn, variant, location, amount, reason)
 
 @wrap_transaction
 def updatedMovementIn(conn, movement_id, status):
@@ -224,8 +224,12 @@ def updatedMovementTransfer(conn, movement_id, status):
     return _updateMovementTransferLogic(conn, movement_id, status)
 
 @wrap_transaction
-def updatedMovementAdjust(conn, movement_id, status):
-    return _updateMovementAdjustLogic(conn, movement_id, status)
+def cancelMovementAdjust(conn, movement_id):
+    return _cancelMovementAdjustLogic(conn, movement_id)
+
+@wrap_transaction
+def recalculatePhysicalAmount(conn, variant, location):
+    return _recalculatePhysicalAmountLogic(conn, variant, location)
 
 #-----------LOGIC FUNCTIONS------------#
 
@@ -318,9 +322,13 @@ def _addMovementInLogic(conn, variant, location, amount, reason, status = Moveme
 
 def _updateMovementInLogic(conn, movement_id, status):
     _updateMovementLogic(conn,movement_id, status)
-    #TODO Edge case when the status is already completed
-    if status == MovementStatus.COMPLETED:
-        results = _fetchMovementInfo(conn, movement_id)
+    results = _fetchMovementInfo(conn, movement_id)
+
+    if results["status"] == MovementStatus.COMPLETED:
+        if status != MovementStatus.COMPLETED:
+            _uncompletedMovementLogic(conn, results["variant"], results["location"], results["amount"], False)
+    
+    elif status == MovementStatus.COMPLETED:
         _completedMovementLogic(conn, results["variant"], results["location"], results["amount"], False)
 
 # Logic functions for OUT type stock_movements-----------------------------------
@@ -332,9 +340,13 @@ def _addMovementOutLogic(conn, variant, location, amount, reason, status = Movem
 
 def _updateMovementOutLogic(conn, movement_id, status):
     _updateMovementLogic(conn, movement_id, status)
-    #TODO Edge case when the status is already completed
-    if status == MovementStatus.COMPLETED:
-        results = _fetchMovementInfo(conn, movement_id)
+    results = _fetchMovementInfo(conn, movement_id)
+
+    if results["status"] == MovementStatus.COMPLETED:
+        if status != MovementStatus.COMPLETED:
+            _uncompletedMovementLogic(conn, results["variant"], results["location"], results["amount"], False)
+    
+    elif status == MovementStatus.COMPLETED:
         _completedMovementLogic(conn, results["variant"], results["location"], results["amount"], False)
 
 # Logic functions for TRANSFER type stock_movements------------------------------
@@ -347,25 +359,29 @@ def _addMovementTransferLogic(conn, variant, location, source_location, amount, 
 
 def _updateMovementTransferLogic(conn, movement_id, status):
     _updateMovementLogic(conn, movement_id, status)
-    #TODO Edge case when the status is already completed
-    if status == MovementStatus.COMPLETED:
-        results = _fetchMovementInfo(conn, movement_id)
+    results = _fetchMovementInfo(conn, movement_id)
+
+    if results["status"] == MovementStatus.COMPLETED:
+        if status != MovementStatus.COMPLETED:
+            _uncompletedMovementLogic(conn, results["variant"], results["location"], results["amount"], False)
+            _uncompletedMovementLogic(conn, results["variant"], results["source_location"], results["amount"], False)
+    
+    elif status == MovementStatus.COMPLETED:
         _completedMovementLogic(conn, results["variant"], results["location"], results["amount"], False)
         _completedMovementLogic(conn, results["variant"], results["source_location"], - results["amount"], False)
 
 # Logic functions for ADJUST type stock_movements--------------------------------
-def _addMovementAdjustLogic(conn, variant, location, amount, reason, status = MovementStatus.COMPLETED):
-    _addMovementLogic(conn, variant, location, None, amount, MovementType.ADJUST, reason, status)
+def _addMovementAdjustLogic(conn, variant, location, amount, reason):
+    _addMovementLogic(conn, variant, location, None, amount, MovementType.ADJUST, reason, MovementStatus.COMPLETED)
 
-    if status == MovementStatus.COMPLETED:
-        _completedMovementLogic(conn, variant, location, amount, True)
+    _completedMovementLogic(conn, variant, location, amount, True)
 
-def _updateMovementAdjustLogic(conn, movement_id, status):
-    _updateMovementLogic(conn, movement_id, status)
-    #TODO Edge case when the status is already completed
-    if status == MovementStatus.COMPLETED:
-        results = _fetchMovementInfo(conn, movement_id)
-        _completedMovementLogic(conn, results["variant"], results["location"], results["amount"], True)
+def _cancelMovementAdjustLogic(conn, movement_id):
+    _updateMovementLogic(conn, movement_id, MovementStatus.CANCELLED)
+    results = _fetchMovementInfo(conn, movement_id)
+
+    if results["status"] == MovementStatus.COMPLETED:
+        _recalculatePhysicalAmount(conn, results["variant"], results["source_location"])
 
 #### Function for updating the has_variants whenever a movement is marked as completed.
 def _completedMovementLogic(conn, variant, location, amount, replace = False):
@@ -377,8 +393,24 @@ def _completedMovementLogic(conn, variant, location, amount, replace = False):
 
     cursor.execute("UPDATE has_products SET physical_amount = ? WHERE variant_id = ? AND location_id = ?", (amount, variant, location))
 
+def _uncompletedMovementLogic(conn, variant, location, amount, replace = False):
+    cursor = conn.cursor()
+    # Cancelling adjustments is not supported by this function-------------------
+    if not replace:
+        cursor.execute("SELECT h.physical_amount FROM has_products AS h WHERE variant_id = ? AND location_id = ?", (variant, location))
+        amount = int(cursor.fetchone()[0]) - amount
+        cursor.execute("UPDATE has_products SET physical_amount = ? WHERE variant_id = ? AND location_id = ?", (amount, variant, location))
+
 #### Function for fetching the data from stock_movements for a given id----------
 def _fetchMovementInfo(conn, movement_id):
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM stock_movements WHERE id = ?", (movement_id,))
     return {"id" : cursor.fetchone()[0], "variant" : cursor.fetchone()[1], "location" : cursor.fetchone()[2], "source_location" : cursor.fetchone()[3], "amount" : cursor.fetchone()[4], "type" : cursor.fetchone()[5], "reason" : cursor.fetchone()[6], "status" : cursor.fetchone()[7], "created_at" : cursor.fetchone()[8]}
+
+#### Function for summing up all transactions and updating the physical_amount---
+def _recalculatePhysicalAmountLogic(conn, variant, location):
+    cursor = conn.cursor()
+    cursor.execute("SUM (m.change_amount) FROM stock_movements AS m WHERE variant_id = ? AND location_id = ?", (variant, location))
+    amount = cursor.fetchone()[0]
+    cursor.execute("UPDATE has_products SET physical_amount = ? WHERE variant_id = ? AND location_id = ?", (amount, variant, location))
+    return amount
